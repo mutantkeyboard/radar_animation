@@ -2,6 +2,8 @@
 
 This was a little fun project while learning how to program with OpenGL
 
+![Radar preview](preview.png)
+
 ## Prerequisites
 - C++ compiler (Clang or GCC)
 - OpenGL
