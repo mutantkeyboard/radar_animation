@@ -3,11 +3,29 @@
 This was a little fun project while learning how to program with OpenGL
 
 ## Prerequisites
-- Clang or GCC compiler
-- OpenGL 
+- C++ compiler (Clang or GCC)
+- OpenGL
+- GLUT
+- CMake (3.10+)
 
-## Build and run on Linux
+## Build and Run
 
-```makefile
+### macOS (including Apple Silicon)
+
+```bash
+cmake -B build && cmake --build build
+./build/radar
+```
+
+### Linux
+
+```bash
+cmake -B build && cmake --build build
+./build/radar
+```
+
+Or using the Makefile directly:
+
+```bash
 make && ./radar
 ```

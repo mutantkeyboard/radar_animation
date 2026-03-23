@@ -1,37 +1,177 @@
+#ifdef __APPLE__
+#define GL_SILENCE_DEPRECATION
+#include <GLUT/glut.h>
+#else
 #include <GL/glut.h>
+#endif
 #include <cmath>
+#include <cstdlib>
+#include <cstdio>
 
 int win_width = 800, win_height = 600; // Window size
 float radar_radius = 200.0f; // Radius of the radar screen
 float hand_length = 200.0f; // Length of the rotating hand
 float hand_angle = 0.0f; // Current angle of the hand
-int dot_timer = 30;
-float dot_x, dot_y;
 float dot_radius = 10.0f;
+float sweep_tolerance = 5.0f; // Degrees of tolerance for hand-dot overlap
 
+// Sweep speed control
+float sweep_speed = 1.0f;    // Degrees per frame
+float min_speed = 0.1f;
+float max_speed = 5.0f;
 
-void drawDot()
+// Slider geometry (in window coordinates, bottom-left area)
+float slider_x = -370.0f;    // Left edge of slider track
+float slider_w = 150.0f;     // Width of slider track
+float slider_y = -270.0f;    // Y position of slider
+float slider_h = 8.0f;       // Height of track
+float knob_radius = 8.0f;    // Radius of the draggable knob
+bool dragging_slider = false;
+
+const int MAX_TARGETS = 20;
+struct Target {
+    float x, y;
+    float brightness;
+    int lifetime;  // Frames remaining before target disappears
+    bool active;
+};
+Target targets[MAX_TARGETS];
+
+float randFloat() { return (float) rand() / RAND_MAX; }
+
+void spawnTarget(Target &t)
 {
-    // Decrement the dot timer
-    dot_timer--;
+    float angle = randFloat() * 2.0f * M_PI;
+    float r = (radar_radius - dot_radius) * std::sqrt(randFloat());
+    t.x = r * std::cos(angle);
+    t.y = r * std::sin(angle);
+    t.brightness = 0.0f;
+    t.lifetime = 300 + rand() % 600; // Lives for 15-45 seconds (at 20fps)
+    t.active = true;
+}
 
-    // Generate a new dot and reset the timer if the timer reaches zero
-    if (dot_timer <= 0)
+void initTargets()
+{
+    for (int i = 0; i < MAX_TARGETS; i++)
+        targets[i].active = false;
+}
+
+void drawTargets()
+{
+    // Randomly spawn new targets (roughly one every few seconds)
+    if (rand() % 40 == 0)
     {
-        dot_timer = 300; // Set the timer to 30 seconds (300 frames)
-        dot_x = ((float) rand() / RAND_MAX) * (2 * radar_radius - 2 * dot_radius) - radar_radius + dot_radius;
-        dot_y = ((float) rand() / RAND_MAX) * (2 * radar_radius - 2 * dot_radius) - radar_radius + dot_radius;
+        for (int i = 0; i < MAX_TARGETS; i++)
+        {
+            if (!targets[i].active)
+            {
+                spawnTarget(targets[i]);
+                break;
+            }
+        }
     }
 
-    // Draw a dot at the current location
-    glColor3f(1.0f, 1.0f, 1.0f); // White
     glPointSize(dot_radius);
-    glBegin(GL_POINTS);
-    glVertex2f(dot_x, dot_y);
+
+    for (int i = 0; i < MAX_TARGETS; i++)
+    {
+        if (!targets[i].active) continue;
+
+        // Count down lifetime and remove expired targets
+        targets[i].lifetime--;
+        if (targets[i].lifetime <= 0)
+        {
+            targets[i].active = false;
+            continue;
+        }
+
+        // Check if the hand is sweeping over this target
+        float dot_angle = std::atan2(targets[i].y, targets[i].x) * 180.0f / M_PI;
+        if (dot_angle < 0.0f) dot_angle += 360.0f;
+
+        float angle_diff = hand_angle - dot_angle;
+        if (angle_diff > 180.0f) angle_diff -= 360.0f;
+        if (angle_diff < -180.0f) angle_diff += 360.0f;
+
+        if (std::fabs(angle_diff) < sweep_tolerance)
+            targets[i].brightness = 1.0f;
+
+        // Draw if visible
+        if (targets[i].brightness > 0.01f)
+        {
+            glColor3f(0.0f, targets[i].brightness, 0.0f);
+            glBegin(GL_POINTS);
+            glVertex2f(targets[i].x, targets[i].y);
+            glEnd();
+
+            targets[i].brightness *= 0.97f;
+        }
+    }
+}
+
+void drawCrosshair()
+{
+    glColor3f(0.2f, 0.6f, 0.2f); // Dim green
+    glBegin(GL_LINES);
+    // Horizontal line
+    glVertex2f(-radar_radius, 0.0f);
+    glVertex2f(radar_radius, 0.0f);
+    // Vertical line
+    glVertex2f(0.0f, -radar_radius);
+    glVertex2f(0.0f, radar_radius);
     glEnd();
 }
 
 
+
+void drawText(float x, float y, const char *text)
+{
+    glRasterPos2f(x, y);
+    while (*text)
+        glutBitmapCharacter(GLUT_BITMAP_HELVETICA_12, *text++);
+}
+
+void drawSlider()
+{
+    // Normalized position of the knob (0..1)
+    float t = (sweep_speed - min_speed) / (max_speed - min_speed);
+    float knob_x = slider_x + t * slider_w;
+
+    // Track background
+    glColor3f(0.3f, 0.3f, 0.3f);
+    glBegin(GL_QUADS);
+    glVertex2f(slider_x, slider_y - slider_h / 2);
+    glVertex2f(slider_x + slider_w, slider_y - slider_h / 2);
+    glVertex2f(slider_x + slider_w, slider_y + slider_h / 2);
+    glVertex2f(slider_x, slider_y + slider_h / 2);
+    glEnd();
+
+    // Filled portion
+    glColor3f(0.2f, 0.8f, 0.2f);
+    glBegin(GL_QUADS);
+    glVertex2f(slider_x, slider_y - slider_h / 2);
+    glVertex2f(knob_x, slider_y - slider_h / 2);
+    glVertex2f(knob_x, slider_y + slider_h / 2);
+    glVertex2f(slider_x, slider_y + slider_h / 2);
+    glEnd();
+
+    // Knob
+    glColor3f(1.0f, 1.0f, 1.0f);
+    glBegin(GL_TRIANGLE_FAN);
+    for (int i = 0; i <= 20; i++)
+    {
+        float a = i * 2.0f * M_PI / 20.0f;
+        glVertex2f(knob_x + knob_radius * std::cos(a),
+                   slider_y + knob_radius * std::sin(a));
+    }
+    glEnd();
+
+    // Label
+    glColor3f(0.7f, 0.7f, 0.7f);
+    char label[32];
+    snprintf(label, sizeof(label), "Speed: %.1fx", sweep_speed);
+    drawText(slider_x, slider_y + 18.0f, label);
+}
 
 void drawRadar()
 {
@@ -87,6 +227,12 @@ void drawRadar()
     }
     glEnd();
 
+    // Draw the crosshair
+    drawCrosshair();
+
+    // Draw targets (before hand so hand renders on top)
+    drawTargets();
+
     // Draw the rotating hand
     glColor3f(1.0f, 0.0f, 0.0f); // Red
     glBegin(GL_LINES);
@@ -97,7 +243,8 @@ void drawRadar()
     glVertex2f(hand_x, hand_y);
     glEnd();
 
-    drawDot();
+    // Draw the speed slider
+    drawSlider();
 
     // Swap buffers to display the screen
     glutSwapBuffers();
@@ -105,18 +252,69 @@ void drawRadar()
 
 void updateHand(int value)
 {
-    // Decrement the angle of the hand
-    hand_angle -= 1.0f;
+    hand_angle -= sweep_speed;
 
-    // Wrap the angle around if it goes below 0 degrees
     if (hand_angle < 0.0f)
         hand_angle += 360.0f;
 
-    // Redraw the screen
     glutPostRedisplay();
-
-    // Call this function again in 10 milliseconds
     glutTimerFunc(50, updateHand, 0);
+}
+
+// Convert window pixel coords to our GL coordinate system
+void screenToWorld(int sx, int sy, float &wx, float &wy)
+{
+    wx = sx - win_width / 2.0f;
+    wy = (win_height / 2.0f) - sy;
+}
+
+void updateSliderFromMouse(int sx, int sy)
+{
+    float wx, wy;
+    screenToWorld(sx, sy, wx, wy);
+    float t = (wx - slider_x) / slider_w;
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    sweep_speed = min_speed + t * (max_speed - min_speed);
+}
+
+void onMouse(int button, int state, int x, int y)
+{
+    if (button == GLUT_LEFT_BUTTON)
+    {
+        if (state == GLUT_DOWN)
+        {
+            float wx, wy;
+            screenToWorld(x, y, wx, wy);
+            // Check if click is near the slider
+            float t = (sweep_speed - min_speed) / (max_speed - min_speed);
+            float knob_x = slider_x + t * slider_w;
+            float dx = wx - knob_x;
+            float dy = wy - slider_y;
+            if (dx * dx + dy * dy <= (knob_radius + 5) * (knob_radius + 5))
+            {
+                dragging_slider = true;
+                updateSliderFromMouse(x, y);
+            }
+            // Also allow clicking anywhere on the track
+            else if (wx >= slider_x && wx <= slider_x + slider_w &&
+                     wy >= slider_y - 15 && wy <= slider_y + 15)
+            {
+                dragging_slider = true;
+                updateSliderFromMouse(x, y);
+            }
+        }
+        else
+        {
+            dragging_slider = false;
+        }
+    }
+}
+
+void onMotion(int x, int y)
+{
+    if (dragging_slider)
+        updateSliderFromMouse(x, y);
 }
 
 void setupOpenGL()
@@ -135,8 +333,11 @@ int main(int argc, char** argv)
     glutCreateWindow("Radar");
 
     setupOpenGL();
+    initTargets();
 
     glutDisplayFunc(drawRadar);
+    glutMouseFunc(onMouse);
+    glutMotionFunc(onMotion);
     glutTimerFunc(10, updateHand, 0);
 
     glutMainLoop();
